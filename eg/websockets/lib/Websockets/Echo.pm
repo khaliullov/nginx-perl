@@ -65,9 +65,58 @@ sub websocket_handler {
         }
     };
 
+    my( @connections );
+
     ngx_reader $c, $buf, 0, 0, 5, sub {
         if (!$!) {
             # echoing everything back
+            if( !defined( $connections[ $c ] ) ) {
+                my( $payload_len, $masked, $mask, $payload, $offset );
+                $masked = vec( $buf, 15, 1 );
+                $payload_len = vec( $buf, 1, 8 ) & 127;
+                $offset = 2;
+                if( $payload_len == 126 ) {
+                    ( $payload_len ) = unpack "n", substr( $buf, $offset, 2 );
+                    $offset += 2;
+                } elsif( $payload_len == 127 ) {
+                    ( $payload_len ) = unpack "N", substr( $buf, $offset + 4, 4 );
+                    $offset += 8;
+                }
+                if( $masked ) {
+                    $mask = substr( $buf, $offset, 4 );
+                    $offset += 4;
+                }
+                $payload = substr( $buf, $offset, $payload_len );
+                my $reminder;
+                if( $masked ) {
+                    if( length( $payload ) < $payload_len ) {
+                        $reminder = substr( $payload, -( length( $payload ) % 4 ) );
+                        $payload = substr( $payload, 0, -( length( $payload ) % 4 ) );
+                    }
+                    $payload = _mask( $payload, $mask );
+                    vec( $buf, 15, 1 ) = 0;
+                }
+                $buf = substr( $buf, 0, $offset - 4 ) . $payload;
+                if( defined $reminder || length( $payload ) < $payload_len ) {
+                    $connections[ $c ] = { total => $payload_len, written => length( $payload ),
+                        masked => $masked, mask => $mask, reminder => $reminder };
+                }
+            } else {
+                if( $connections[ $c ]->{ masked } ) {
+                    if( defined $connections[ $c ]->{ reminder } ) {
+                        $buf = $connections[ $c ]->{ reminder } . $buf;
+                    }
+                    if( length( $buf ) + $connections[ $c ]->{ written } < $connections[ $c ]->{ total } ) {
+                        $connections[ $c ]->{ reminder } = substr( $buf, -( length( $buf ) % 4 ) );
+                        $buf = substr( $buf, 0, -( length( $buf ) % 4 ) );
+                    }
+                    $buf = _mask( $buf, $connections[ $c ]->{ mask } );
+                }
+                $connections[ $c ]->{ written } += length( $buf );
+                if( $connections[ $c ]->{ written } >= $connections[ $c ]->{ total } ) {
+                    delete $connections[ $c ];
+                }
+            }
             return NGX_WRITE; 
         } else {
             $r->give_connection;
@@ -81,6 +130,18 @@ sub websocket_handler {
     return NGX_DONE;  # always after $r->main_count_inc
 }
 
+sub _mask {
+    my( $payload, $mask ) = @_;
+
+    my @mask = split //, $mask;
+
+    my @payload = split //, $payload;
+    for( my $i = 0; $i < @payload; $i++ ) {
+        my $j = $i % 4;
+        $payload[$i] ^= $mask[$j];
+    }
+    return join '', @payload;
+}
 
 sub webpage_handler {
     my ($r) = @_;

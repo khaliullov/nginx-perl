@@ -424,7 +424,7 @@ sub parse_ws_frames_v13 ($$) {
             $hlen += 4;
         } elsif ($len == 127) {
             last if length($$buf) - $total < 10;
-            ($len) = unpack "N", substr($$buf, $total + 6, 4);  
+            ($len) = unpack "N", substr($$buf, $total + 6, 4);
             $hlen += 10;
         }
 
@@ -492,29 +492,24 @@ sub append_ws_frame_v13 ($$) {
     $h .= pack "C", $c0;
 
     if (length($$payload) < 126) {
-        $c1 = length($$payload) | 0x80;
+        $c1 = length($$payload);
         $h .= pack "C", $c1;
     } elsif (length($$payload) <= 0xffff) {
-        $c1  = 126 | 0x80;
+        $c1  = 126;
         $h .= pack "C", $c1;
         $h .= pack "n", length($$payload);
     } else {
-        $c1  = 127 | 0x80;
+        $c1  = 127;
         $h .= pack "C", $c1;
         $h .= pack "x4N", length($$payload);
     }
-
-    my $mask = pack "N", int rand 2 ** 32;
-    $h .= $mask;
 
     $$buf .= $h;
     $total += length $h;
 
     for (my $i = 0; $i < length($$payload); $i++) {
-        my $j  = $i % 4;
         my $in = substr $$payload, $i, 1; 
-        my $m  = substr $mask, $j, 1;
-        $$buf .= $in ^ $m;
+        $$buf .= $in;
         $total += 1;
     }
 
